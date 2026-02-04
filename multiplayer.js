@@ -1,5 +1,5 @@
 // Multiplayer client handler using Supabase Realtime
-// Fixed version with proper room entry synchronization
+// Fixed version with proper room entry synchronization, enemy bullets, and items
 
 const SUPABASE_URL = 'https://gdyhdywnlnaqwqtmwadx.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_VQbRK1tUFZIf37baWdeAKw_E5LZm6Sg';
@@ -17,7 +17,9 @@ const multiplayer = {
     updateInterval: 50,
     roomId: null,
     difficulty: null,
-    lastEnemyUpdate: 0
+    lastEnemyUpdate: 0,
+    lastEnemyBulletUpdate: 0,
+    lastItemUpdate: 0
 };
 
 // Initialize Supabase client
@@ -224,27 +226,38 @@ async function subscribeToRoom(roomId) {
                     syncEnemies(payload.enemies);
                 }
             })
+            .on('broadcast', { event: 'enemy_bullets_sync' }, ({ payload }) => {
+                // All players receive enemy bullets from host
+                if (!multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
+                    syncEnemyBullets(payload.bullets);
+                }
+            })
+            .on('broadcast', { event: 'items_sync' }, ({ payload }) => {
+                // All players receive items from host
+                if (!multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
+                    syncItems(payload.items);
+                }
+            })
             .on('broadcast', { event: 'chat_message' }, ({ payload }) => {
                 addChatMessage(payload.playerName, payload.message);
             })
             .on('broadcast', { event: 'room_changed' }, ({ payload }) => {
-                // IMPORTANT: Don't update visited status from other players
-                // This was causing the bug where second player entering a room wouldn't spawn enemies
-                
                 // Update other player's position
                 if (payload.playerId !== multiplayer.playerId) {
                     handleOtherPlayerRoomChange(payload);
                     
-                    // If host and another player entered the same room as us, sync enemies AND spawn indicators
+                    // If host and another player entered the same room as us, sync everything
                     if (multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
                         console.log('👥 Teammate entered our room, syncing state...');
                         // Send current spawn indicators immediately
                         if (game.enemySpawnIndicators.length > 0) {
                             sendSpawnIndicators();
                         }
-                        // Then sync enemies
+                        // Then sync enemies, bullets, and items
                         setTimeout(() => {
                             sendEnemyUpdate();
+                            sendEnemyBulletsUpdate();
+                            sendItemsSync();
                         }, 50);
                     }
                 }
@@ -264,8 +277,8 @@ async function subscribeToRoom(roomId) {
                 }
             })
             .on('broadcast', { event: 'spawn_indicators' }, ({ payload }) => {
-                // Non-hosts receive spawn indicators from host
-                if (!multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
+                // All players receive spawn indicators
+                if (payload.gridX === game.gridX && payload.gridY === game.gridY) {
                     game.enemySpawnIndicators = payload.indicators;
                 }
             })
@@ -506,10 +519,9 @@ function updateOtherPlayer(data) {
 function interpolatePlayers(deltaTime) {
     if (!multiplayer.enabled) return;
     
-    const interpolationSpeed = 0.3; // Adjust for smoothness (0-1, higher = faster)
+    const interpolationSpeed = 0.3;
     
     multiplayer.players.forEach((player, playerId) => {
-        // Smoothly move towards target position
         const dx = player.targetX - player.x;
         const dy = player.targetY - player.y;
         
@@ -520,7 +532,6 @@ function interpolatePlayers(deltaTime) {
 
 // Handle other player shooting
 function handleOtherPlayerShot(data) {
-    // Add bullet from other player
     if (data.bullet) {
         game.bullets.push({
             ...data.bullet,
@@ -558,17 +569,11 @@ function sendShootEvent(bullet) {
 
 // Sync enemies from host (non-hosts only)
 function syncEnemies(enemiesData) {
-    // Don't override if we're the host
     if (multiplayer.isHost) return;
     
-    // Update or create enemies based on host data
-    // We'll match by position similarity since we don't have unique IDs
-    
-    // First, mark all current enemies as "not synced"
     game.enemies.forEach(e => e._synced = false);
     
     enemiesData.forEach(eData => {
-        // Try to find matching enemy by position and type
         let enemy = game.enemies.find(e => 
             !e._synced && 
             e.type === eData.type &&
@@ -576,7 +581,6 @@ function syncEnemies(enemiesData) {
         );
         
         if (enemy) {
-            // Update existing enemy with interpolation
             enemy.targetX = eData.x;
             enemy.targetY = eData.y;
             enemy.health = eData.health;
@@ -585,12 +589,10 @@ function syncEnemies(enemiesData) {
             enemy.wanderTimer = eData.wanderTimer;
             enemy.lastShot = eData.lastShot;
             
-            // Boss-specific
             if (enemy.type === ENEMY_TYPES.BOSS) {
                 enemy.shotPattern = eData.shotPattern;
             }
             
-            // Dasher-specific
             if (enemy.type === ENEMY_TYPES.DASHER) {
                 enemy.state = eData.state;
                 enemy.dashDirection = eData.dashDirection;
@@ -599,19 +601,16 @@ function syncEnemies(enemiesData) {
                 enemy.lastDash = eData.lastDash;
             }
             
-            // Necromancer-specific
             if (enemy.type === ENEMY_TYPES.NECROMANCER) {
                 enemy.lastSummon = eData.lastSummon;
             }
             
-            // Summoned-specific
             if (enemy.type === ENEMY_TYPES.SUMMONED) {
                 enemy.actualType = eData.actualType;
             }
             
             enemy._synced = true;
         } else {
-            // Create new enemy
             const newEnemy = {
                 x: eData.x,
                 y: eData.y,
@@ -629,12 +628,10 @@ function syncEnemies(enemiesData) {
                 _synced: true
             };
             
-            // Boss-specific
             if (eData.type === ENEMY_TYPES.BOSS) {
                 newEnemy.shotPattern = eData.shotPattern || 0;
             }
             
-            // Dasher-specific
             if (eData.type === ENEMY_TYPES.DASHER) {
                 newEnemy.state = eData.state || 'idle';
                 newEnemy.dashDirection = eData.dashDirection || { x: 0, y: 0 };
@@ -648,7 +645,6 @@ function syncEnemies(enemiesData) {
                 newEnemy.lastDash = eData.lastDash || 0;
             }
             
-            // Necromancer-specific
             if (eData.type === ENEMY_TYPES.NECROMANCER) {
                 newEnemy.lastSummon = eData.lastSummon || Date.now();
                 newEnemy.summonCooldown = 5000;
@@ -656,21 +652,53 @@ function syncEnemies(enemiesData) {
                 newEnemy.healPerKill = 30 + (game.player?.level || 1) * 30;
             }
             
-            // Summoned-specific
             if (eData.type === ENEMY_TYPES.SUMMONED) {
                 newEnemy.actualType = eData.actualType;
-                newEnemy.master = null; // Will be rebuilt by necromancer logic
+                newEnemy.master = null;
             }
             
             game.enemies.push(newEnemy);
         }
     });
     
-    // Remove enemies that weren't synced (they were killed on host)
     game.enemies = game.enemies.filter(e => e._synced);
-    
-    // Clean up sync flag
     game.enemies.forEach(e => delete e._synced);
+}
+
+// Sync enemy bullets from host
+function syncEnemyBullets(bulletsData) {
+    if (multiplayer.isHost) return;
+    
+    // Replace all enemy bullets with synced data
+    game.enemyBullets = bulletsData.map(bData => ({
+        x: bData.x,
+        y: bData.y,
+        vx: bData.vx,
+        vy: bData.vy,
+        color: bData.color,
+        size: bData.size
+    }));
+}
+
+// Sync items from host
+function syncItems(itemsData) {
+    if (multiplayer.isHost) return;
+    
+    // Keep only items that still exist in synced data
+    game.items = itemsData.map(iData => {
+        const item = {
+            x: iData.x,
+            y: iData.y,
+            type: iData.type,
+            size: iData.size
+        };
+        
+        if (iData.amount !== undefined) item.amount = iData.amount;
+        if (iData.data) item.data = iData.data;
+        if (iData.miniBossType) item.miniBossType = iData.miniBossType;
+        
+        return item;
+    });
 }
 
 // Interpolate enemy positions for smooth movement (non-hosts only)
@@ -712,18 +740,63 @@ function sendEnemyUpdate() {
                 wanderAngle: e.wanderAngle,
                 wanderTimer: e.wanderTimer,
                 lastShot: e.lastShot,
-                // Boss-specific
                 shotPattern: e.shotPattern,
-                // Dasher-specific
                 state: e.state,
                 dashDirection: e.dashDirection,
                 windupTime: e.windupTime,
                 dashStartTime: e.dashStartTime,
                 lastDash: e.lastDash,
-                // Necromancer-specific
                 lastSummon: e.lastSummon,
-                // Summoned-specific
                 actualType: e.actualType
+            }))
+        }
+    });
+}
+
+// Send enemy bullets update (host only)
+function sendEnemyBulletsUpdate() {
+    if (!multiplayer.enabled || !multiplayer.isHost || !multiplayer.channel) return;
+
+    const now = Date.now();
+    if (now - (multiplayer.lastEnemyBulletUpdate || 0) < 100) return;
+    multiplayer.lastEnemyBulletUpdate = now;
+
+    multiplayer.channel.send({
+        type: 'broadcast',
+        event: 'enemy_bullets_sync',
+        payload: {
+            gridX: game.gridX,
+            gridY: game.gridY,
+            bullets: game.enemyBullets.map(b => ({
+                x: b.x,
+                y: b.y,
+                vx: b.vx,
+                vy: b.vy,
+                color: b.color,
+                size: b.size
+            }))
+        }
+    });
+}
+
+// Send items sync (host only)
+function sendItemsSync() {
+    if (!multiplayer.enabled || !multiplayer.isHost || !multiplayer.channel) return;
+
+    multiplayer.channel.send({
+        type: 'broadcast',
+        event: 'items_sync',
+        payload: {
+            gridX: game.gridX,
+            gridY: game.gridY,
+            items: game.items.map(i => ({
+                x: i.x,
+                y: i.y,
+                type: i.type,
+                size: i.size,
+                amount: i.amount,
+                data: i.data,
+                miniBossType: i.miniBossType
             }))
         }
     });
@@ -773,7 +846,6 @@ async function leaveMultiplayer() {
         multiplayer.channel.unsubscribe();
     }
 
-    // Remove from database
     if (multiplayer.roomId) {
         const supabase = await initSupabase();
         await supabase
@@ -782,7 +854,6 @@ async function leaveMultiplayer() {
             .eq('room_id', multiplayer.roomId)
             .eq('player_id', multiplayer.playerId);
         
-        // If host leaves, delete the room
         if (multiplayer.isHost) {
             await supabase
                 .from('game_rooms')
@@ -807,7 +878,7 @@ async function leaveMultiplayer() {
 
 // Send spawn indicators (host only)
 function sendSpawnIndicators() {
-    if (!multiplayer.enabled || !multiplayer.isHost || !multiplayer.channel) return;
+    if (!multiplayer.enabled || !multiplayer.channel) return;
 
     multiplayer.channel.send({
         type: 'broadcast',
@@ -831,7 +902,6 @@ function sendSpawnIndicators() {
 function sendRoomChange(gridX, gridY) {
     if (!multiplayer.enabled || !multiplayer.channel) return;
 
-    // Don't send room state - let each client track their own visited rooms
     multiplayer.channel.send({
         type: 'broadcast',
         event: 'room_changed',
@@ -860,7 +930,6 @@ function sendRoomCleared(gridX, gridY) {
 // Handle other player changing rooms
 function handleOtherPlayerRoomChange(data) {
     console.log(`Player ${data.playerId} moved to room (${data.gridX}, ${data.gridY})`);
-    // Update other player's room position if tracking
     const player = multiplayer.players.get(data.playerId);
     if (player) {
         player.gridX = data.gridX;
@@ -868,4 +937,4 @@ function handleOtherPlayerRoomChange(data) {
     }
 }
 
-console.log('✅ Multiplayer.js loaded - Fixed enemy spawning for all players');
+console.log('✅ Multiplayer.js loaded - Fixed enemy spawning, bullets, and items for all players');
