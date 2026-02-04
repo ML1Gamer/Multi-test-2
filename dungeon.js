@@ -406,9 +406,28 @@ function enterRoom(room) {
         const isBossFloor = game.player.level % 5 === 0;
         
         if (room.type === ROOM_TYPES.NORMAL) {
-            // In multiplayer, only host spawns enemies
-            if (!multiplayer.enabled || multiplayer.isHost) {
+            // MULTIPLAYER FIX: Any player can spawn enemies when entering an uncleared room
+            // But only if no enemies currently exist (to prevent duplicate spawns)
+            const shouldSpawn = !room.cleared && game.enemies.length === 0;
+            
+            if (!multiplayer.enabled) {
+                // Singleplayer: always spawn
                 spawnEnemiesInRoom(room);
+            } else if (shouldSpawn) {
+                // Multiplayer: spawn only if room needs enemies
+                // Host or non-host can trigger, but check prevents duplicates
+                spawnEnemiesInRoom(room);
+                
+                // If host, will sync to others. If non-host, host will override shortly
+                // This prevents the "waiting for host" issue
+                if (multiplayer.isHost) {
+                    // Host immediately broadcasts spawn indicators
+                    setTimeout(() => {
+                        if (game.enemySpawnIndicators.length > 0) {
+                            sendSpawnIndicators();
+                        }
+                    }, 100);
+                }
             }
         } else if (room.type === ROOM_TYPES.MINIBOSS) {
             // Add pedestal to summon mini-boss
