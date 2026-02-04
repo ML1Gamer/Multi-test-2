@@ -392,9 +392,15 @@ function enterRoom(room) {
         game.walls.push({ x: 0, y: ROOM_HEIGHT / 2 + DOOR_SIZE / 2, w: 20, h: ROOM_HEIGHT / 2 - DOOR_SIZE / 2 });
     }
 
-    if (!room.visited) {
+    // MULTIPLAYER FIX: Check if room was visited BY THIS CLIENT
+    // In multiplayer, room.visited can be true from other players, but this client hasn't entered yet
+    const roomKey = `${room.gridX},${room.gridY}`;
+    const wasVisitedByMe = game.visitedRooms.has(roomKey);
+    
+    if (!wasVisitedByMe) {
+        // Mark as visited by this client
         room.visited = true;
-        game.visitedRooms.add(`${room.gridX},${room.gridY}`);
+        game.visitedRooms.add(roomKey);
 
         // Spawn content based on room type
         const isBossFloor = game.player.level % 5 === 0;
@@ -480,7 +486,7 @@ function enterRoom(room) {
             room.cleared = true;
         }
     } else {
-        // Re-entering room
+        // Re-entering room (already visited by this client)
         const isBossFloor = game.player.level % 5 === 0;
         
         if (room.type === ROOM_TYPES.MINIBOSS) {
