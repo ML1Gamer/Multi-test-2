@@ -235,12 +235,17 @@ async function subscribeToRoom(roomId) {
                 if (payload.playerId !== multiplayer.playerId) {
                     handleOtherPlayerRoomChange(payload);
                     
-                    // If host and another player entered the same room as us, sync enemies
+                    // If host and another player entered the same room as us, sync enemies AND spawn indicators
                     if (multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
-                        console.log('👥 Teammate entered our room, syncing enemies...');
+                        console.log('👥 Teammate entered our room, syncing state...');
+                        // Send current spawn indicators immediately
+                        if (game.enemySpawnIndicators.length > 0) {
+                            sendSpawnIndicators();
+                        }
+                        // Then sync enemies
                         setTimeout(() => {
                             sendEnemyUpdate();
-                        }, 150);
+                        }, 50);
                     }
                 }
             })
@@ -417,12 +422,14 @@ function updateMultiplayerUI() {
     if (!playerListDiv) return;
 
     let html = `<div class="mp-player" style="border-left-color: #4ecca3;">
-        ${multiplayer.playerName} (You) - HP: ${Math.round(game.player.health)}
+        ${multiplayer.playerName} (You) - HP: ${Math.round(game.player.health)}/${game.player.maxHealth}
     </div>`;
 
     multiplayer.players.forEach((player, playerId) => {
-        html += `<div class="mp-player">
-            ${player.name} - HP: ${Math.round(player.health)}
+        const healthPercent = (player.health / player.maxHealth) * 100;
+        const healthColor = healthPercent > 50 ? '#4ecca3' : (healthPercent > 25 ? '#ffa500' : '#e94560');
+        html += `<div class="mp-player" style="border-left-color: ${healthColor};">
+            ${player.name} - HP: ${Math.round(player.health)}/${player.maxHealth}
         </div>`;
     });
 
@@ -444,10 +451,12 @@ function sendPlayerUpdate() {
         event: 'player_update',
         payload: {
             playerId: multiplayer.playerId,
+            playerName: multiplayer.playerName,
             x: game.player.x,
             y: game.player.y,
             angle: game.player.angle,
             health: game.player.health,
+            maxHealth: game.player.maxHealth,
             currentWeapon: currentWeapon ? currentWeapon.name : 'None',
             gridX: game.gridX,
             gridY: game.gridY,
@@ -470,6 +479,7 @@ function updateOtherPlayer(data) {
             targetY: data.y,
             angle: data.angle,
             health: data.health,
+            maxHealth: data.maxHealth || 100,
             currentWeapon: data.currentWeapon,
             gridX: data.gridX,
             gridY: data.gridY,
@@ -482,6 +492,7 @@ function updateOtherPlayer(data) {
         player.targetY = data.y;
         player.angle = data.angle;
         player.health = data.health;
+        player.maxHealth = data.maxHealth || player.maxHealth || 100;
         player.currentWeapon = data.currentWeapon;
         player.gridX = data.gridX;
         player.gridY = data.gridY;
