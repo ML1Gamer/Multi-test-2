@@ -224,6 +224,50 @@ function update(deltaTime) {
         }
     }
 
+    // GAME.JS UPDATE - Add this to your update() function in game.js
+// Add after the existing multiplayer enemy update code (around line where you have sendEnemyUpdate)
+
+// In the update() function, add this code block after the enemy AI section:
+
+    // Send player update to multiplayer server
+    if (multiplayer.enabled) {
+        sendPlayerUpdate();
+        
+        // Interpolate other players' positions for smooth movement
+        interpolatePlayers(deltaTime);
+        
+        // Host sends enemy updates, enemy bullets, and runs enemy AI
+        if (multiplayer.isHost) {
+            const now = Date.now();
+            
+            // Send enemy positions
+            if (now - (multiplayer.lastEnemyUpdate || 0) > 100) {
+                sendEnemyUpdate();
+                multiplayer.lastEnemyUpdate = now;
+            }
+            
+            // Send enemy bullets - THIS IS NEW
+            if (now - (multiplayer.lastEnemyBulletUpdate || 0) > 100) {
+                sendEnemyBulletsUpdate();
+                multiplayer.lastEnemyBulletUpdate = now;
+            }
+            
+            // Send items occasionally to keep them synced
+            if (now - (multiplayer.lastItemUpdate || 0) > 500) {
+                sendItemsSync();
+                multiplayer.lastItemUpdate = now;
+            }
+        } else {
+            // Non-hosts interpolate enemy positions (don't run AI)
+            interpolateEnemies(deltaTime);
+        }
+    }
+
+// This ensures that:
+// 1. Enemy bullets are synced every 100ms (same as enemies)
+// 2. Items are synced every 500ms to keep them updated
+// 3. Non-hosts receive and display enemy bullets correctly
+
     // Auto-pickup nearby items
     pickupNearbyItems();
 
