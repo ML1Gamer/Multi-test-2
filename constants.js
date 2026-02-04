@@ -38,7 +38,7 @@ const DIFFICULTY_MODIFIERS = {
         enemyHealthMult: 2.0,
         enemyDamageMult: 2.0,
         shopPriceMult: 1,
-        dropRateMult: 0.25,
+        dropRateMult: 1,
         displayName: 'IMPOSSIBLE',
         oneHPMode: true,
         noNormalEnemyAmmo: true
