@@ -127,7 +127,7 @@ function spawnEnemiesInRoom(room) {
     game.doors.forEach(door => door.blocked = true);
     
     // Broadcast spawn indicators to other players
-    if (multiplayer.enabled && multiplayer.isHost) {
+    if (multiplayer.enabled) {
         sendSpawnIndicators();
     }
 }
@@ -254,6 +254,11 @@ function handleEnemyDeath(enemy) {
                 data: newGear,
                 size: 18
             });
+            
+            // Sync items in multiplayer
+            if (multiplayer.enabled) {
+                sendItemsSync();
+            }
         }
         // Boss drops special loot
         else if (enemy.type === ENEMY_TYPES.BOSS) {
@@ -298,6 +303,11 @@ function handleEnemyDeath(enemy) {
                 data: 'health',
                 size: 15
             });
+            
+            // Sync items in multiplayer
+            if (multiplayer.enabled) {
+                sendItemsSync();
+            }
         } else {
             game.player.score += 10;
             createParticles(enemy.x, enemy.y, enemy.color, 15);
@@ -338,6 +348,11 @@ function handleEnemyDeath(enemy) {
                     size: 15
                 });
             }
+            
+            // Sync items in multiplayer
+            if (multiplayer.enabled) {
+                sendItemsSync();
+            }
         }
         
         if (game.enemies.length === 0) {
@@ -366,30 +381,30 @@ function updateEnemySpawnIndicators() {
         
         // Check if it's time to spawn
         if (now >= indicator.spawnTime) {
-            // Only host actually spawns enemies - non-hosts receive them via sync
-            if (!multiplayer.enabled || multiplayer.isHost) {
-                // Actually spawn the enemy
-                if (indicator.isBoss) {
-                    const modifier = getDifficultyModifier();
-                    const baseHealth = 300 + game.player.level * 50;
-                    const boss = {
-                        x: indicator.x,
-                        y: indicator.y,
-                        size: 35,
-                        health: baseHealth * modifier.enemyHealthMult,
-                        maxHealth: baseHealth * modifier.enemyHealthMult,
-                        speed: 1.5,
-                        color: '#8b0000',
-                        type: ENEMY_TYPES.BOSS,
-                        wanderAngle: Math.random() * Math.PI * 2,
-                        wanderTimer: 0,
-                        lastShot: 0,
-                        shotPattern: 0
-                    };
-                    game.enemies.push(boss);
-                } else {
-                    spawnEnemy(indicator.x, indicator.y, indicator.type);
-                }
+            // MULTIPLAYER FIX: All players spawn their own enemies from indicators
+            // Host will sync the authoritative state shortly after
+            
+            // Actually spawn the enemy
+            if (indicator.isBoss) {
+                const modifier = getDifficultyModifier();
+                const baseHealth = 300 + game.player.level * 50;
+                const boss = {
+                    x: indicator.x,
+                    y: indicator.y,
+                    size: 35,
+                    health: baseHealth * modifier.enemyHealthMult,
+                    maxHealth: baseHealth * modifier.enemyHealthMult,
+                    speed: 1.5,
+                    color: '#8b0000',
+                    type: ENEMY_TYPES.BOSS,
+                    wanderAngle: Math.random() * Math.PI * 2,
+                    wanderTimer: 0,
+                    lastShot: 0,
+                    shotPattern: 0
+                };
+                game.enemies.push(boss);
+            } else {
+                spawnEnemy(indicator.x, indicator.y, indicator.type);
             }
             
             // Create spawn particles
@@ -400,6 +415,13 @@ function updateEnemySpawnIndicators() {
             
             // Remove the indicator
             game.enemySpawnIndicators.splice(i, 1);
+            
+            // Host syncs enemies immediately after spawning
+            if (multiplayer.enabled && multiplayer.isHost) {
+                setTimeout(() => {
+                    sendEnemyUpdate();
+                }, 100);
+            }
         }
     }
 }
