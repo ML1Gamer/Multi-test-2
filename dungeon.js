@@ -571,6 +571,14 @@ function enterRoom(room) {
     }
 
     updateMinimap();
+    
+    // MULTIPLAYER FIX: Request enemy sync after entering room
+    if (multiplayer.enabled && !multiplayer.isHost) {
+        // Delay request slightly to ensure room change is processed
+        setTimeout(() => {
+            requestRoomEnemySync(game.gridX, game.gridY);
+        }, 200);
+    }
 }
 
 function spawnBossRoom(room) {
