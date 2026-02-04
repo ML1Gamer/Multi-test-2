@@ -1,5 +1,5 @@
 // Multiplayer client handler using Supabase Realtime
-// Fixed version with position interpolation and proper enemy sync
+// Fixed version with proper room entry synchronization
 
 const SUPABASE_URL = 'https://gdyhdywnlnaqwqtmwadx.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_VQbRK1tUFZIf37baWdeAKw_E5LZm6Sg';
@@ -228,21 +228,8 @@ async function subscribeToRoom(roomId) {
                 addChatMessage(payload.playerName, payload.message);
             })
             .on('broadcast', { event: 'room_changed' }, ({ payload }) => {
-                // Sync room state (visited/cleared) FIRST, before other player enters
-                if (payload.roomState && game.rooms[payload.gridY] && game.rooms[payload.gridY][payload.gridX]) {
-                    const room = game.rooms[payload.gridY][payload.gridX];
-                    room.visited = payload.roomState.visited;
-                    room.cleared = payload.roomState.cleared;
-                    
-                    // Also sync visited rooms set
-                    if (payload.visitedRooms) {
-                        payload.visitedRooms.forEach(roomKey => {
-                            game.visitedRooms.add(roomKey);
-                        });
-                    }
-                    
-                    updateMinimap();
-                }
+                // IMPORTANT: Don't update visited status from other players
+                // This was causing the bug where second player entering a room wouldn't spawn enemies
                 
                 // Update other player's position
                 if (payload.playerId !== multiplayer.playerId) {
@@ -290,6 +277,9 @@ async function subscribeToRoom(roomId) {
                         game.player.health = game.player.maxHealth;
                     }
                     game.player.hasKey = false;
+                    
+                    // Clear visited rooms so new dungeon spawns properly
+                    game.visitedRooms.clear();
                     
                     // Generate dungeon with same seed as host
                     generateDungeonWithSeed(payload.dungeonSeed);
@@ -400,6 +390,9 @@ function startMultiplayerGame(difficulty, dungeonSeed) {
         shoes: null,
         ammoType: null
     };
+    
+    // Clear visited rooms to ensure fresh start
+    game.visitedRooms.clear();
     
     // Use seeded dungeon generation so all players get the same map!
     if (dungeonSeed) {
@@ -827,19 +820,14 @@ function sendSpawnIndicators() {
 function sendRoomChange(gridX, gridY) {
     if (!multiplayer.enabled || !multiplayer.channel) return;
 
-    const room = game.rooms[gridY] && game.rooms[gridY][gridX];
+    // Don't send room state - let each client track their own visited rooms
     multiplayer.channel.send({
         type: 'broadcast',
         event: 'room_changed',
         payload: {
             playerId: multiplayer.playerId,
             gridX: gridX,
-            gridY: gridY,
-            roomState: room ? {
-                visited: room.visited,
-                cleared: room.cleared
-            } : null,
-            visitedRooms: Array.from(game.visitedRooms) // Share all visited rooms
+            gridY: gridY
         }
     });
 }
@@ -869,4 +857,4 @@ function handleOtherPlayerRoomChange(data) {
     }
 }
 
-console.log('✅ Multiplayer.js loaded - With position interpolation and proper enemy sync');
+console.log('✅ Multiplayer.js loaded - Fixed enemy spawning for all players');
