@@ -306,6 +306,11 @@ function generateDungeon() {
 function enterRoom(room) {
     if (!room) return;
 
+    // MULTIPLAYER: Host stores current room state before entering new room
+    if (multiplayer.enabled && multiplayer.isHost && game.currentRoom) {
+        storeCurrentRoomState();
+    }
+
     game.player.x = ROOM_WIDTH / 2;
     game.player.y = ROOM_HEIGHT / 2;
     game.enemies = [];
@@ -314,6 +319,11 @@ function enterRoom(room) {
     game.doors = [];
     game.walls = [];
     game.enemySpawnIndicators = []; // Clear spawn indicators
+    
+    // MULTIPLAYER: Host loads saved room state after clearing arrays
+    if (multiplayer.enabled && multiplayer.isHost) {
+        loadRoomState(room.gridX, room.gridY);
+    }
 
     // Play appropriate music for room type
     if (room.type === ROOM_TYPES.SHOP) {
@@ -571,14 +581,6 @@ function enterRoom(room) {
     }
 
     updateMinimap();
-    
-    // MULTIPLAYER FIX: Request enemy sync after entering room
-    if (multiplayer.enabled && !multiplayer.isHost) {
-        // Delay request slightly to ensure room change is processed
-        setTimeout(() => {
-            requestRoomEnemySync(game.gridX, game.gridY);
-        }, 200);
-    }
 }
 
 function spawnBossRoom(room) {
