@@ -1,0 +1,16 @@
+{
+  "name": "dungeon-crawler-multiplayer",
+  "version": "1.0.0",
+  "description": "Multiplayer dungeon crawler server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

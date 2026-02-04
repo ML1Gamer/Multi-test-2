@@ -1,0 +1,457 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: #1a1a2e;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    color: #eee;
+    overflow: auto;
+    padding: 10px;
+}
+
+#mainMenu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #1a1a2e;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+#mainMenuContent {
+    background: #16213e;
+    padding: 50px;
+    border-radius: 20px;
+    border: 4px solid #4ecca3;
+    max-width: 600px;
+    width: 90%;
+}
+
+#mainMenuButtons {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.menu-button {
+    padding: 15px 30px;
+    background: linear-gradient(135deg, #4ecca3, #3d9b7f);
+    border: none;
+    color: white;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: 'Courier New', monospace;
+    font-size: 18px;
+    font-weight: bold;
+    transition: all 0.3s;
+    box-shadow: 0 4px 15px rgba(78, 204, 163, 0.3);
+}
+
+.menu-button:hover {
+    background: linear-gradient(135deg, #3d9b7f, #2d7a60);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(78, 204, 163, 0.5);
+}
+
+.menu-button:active {
+    transform: translateY(0);
+}
+
+.difficulty-button {
+    padding: 20px;
+    border: 3px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    margin: 10px 0;
+    transition: all 0.3s;
+    color: white;
+}
+
+.difficulty-button.easy {
+    background: linear-gradient(135deg, #4ecca3, #3d9b7f);
+    border-color: #4ecca3;
+}
+
+.difficulty-button.normal {
+    background: linear-gradient(135deg, #5a8dee, #4a7ddd);
+    border-color: #5a8dee;
+}
+
+.difficulty-button.hard {
+    background: linear-gradient(135deg, #ff8c42, #ff6b2b);
+    border-color: #ff8c42;
+}
+
+.difficulty-button.impossible {
+    background: linear-gradient(135deg, #e94560, #d63450);
+    border-color: #e94560;
+}
+
+.difficulty-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+#pauseMenu {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #16213e;
+    border: 4px solid #4ecca3;
+    padding: 40px;
+    border-radius: 15px;
+    display: none;
+    z-index: 1500;
+    min-width: 400px;
+}
+
+#pauseMenu.active {
+    display: block;
+}
+
+#pauseMenuContent {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+#gameContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    max-width: 100%;
+    width: fit-content;
+}
+
+canvas {
+    border: 4px solid #16213e;
+    background: #0f3460;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+#gameCanvas {
+    width: 800px;
+    height: 600px;
+    max-width: 100%;
+}
+
+#ui {
+    display: flex;
+    gap: 20px;
+    background: #16213e;
+    padding: 15px 20px;
+    border-radius: 10px;
+    font-size: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 100%;
+}
+
+.stat {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: fit-content;
+}
+
+.bar {
+    width: 150px;
+    height: 20px;
+    background: #0f3460;
+    border: 2px solid #e94560;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #e94560, #ff6b9d);
+    transition: width 0.3s;
+}
+
+#minimap {
+    background: #16213e;
+    padding: 15px;
+    border-radius: 10px;
+}
+
+#minimapCanvas {
+    border: 2px solid #0f3460;
+    max-width: 100%;
+    height: auto;
+}
+
+#inventory {
+    background: #16213e;
+    padding: 15px;
+    border-radius: 10px;
+    min-width: 300px;
+    max-width: 100%;
+}
+
+.weapon-item {
+    padding: 8px;
+    margin: 5px 0;
+    background: #0f3460;
+    border-radius: 5px;
+    border-left: 4px solid #e94560;
+    font-size: 12px;
+    word-wrap: break-word;
+}
+
+.active-weapon {
+    border-left-color: #4ecca3;
+    background: #1a4d3e;
+}
+
+#controls {
+    text-align: center;
+    background: #16213e;
+    padding: 15px;
+    border-radius: 10px;
+    font-size: 11px;
+    max-width: 100%;
+}
+
+#shopMenu {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #16213e;
+    border: 4px solid #4ecca3;
+    padding: 30px;
+    border-radius: 15px;
+    display: none;
+    z-index: 1000;
+    max-width: 95vw;
+    max-height: 85vh;
+    overflow-y: auto;
+    min-width: 600px;
+}
+
+#shopMenu.active {
+    display: block;
+}
+
+.shop-item {
+    padding: 12px 15px;
+    margin: 8px 0;
+    background: #0f3460;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+    border: 2px solid transparent;
+    font-size: 13px;
+}
+
+.shop-item:hover:not(.disabled) {
+    background: #1a4d3e;
+    border-color: #4ecca3;
+    transform: translateX(5px);
+}
+
+.shop-item.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.shop-item.disabled:hover {
+    background: #0f3460;
+    border-color: transparent;
+    transform: none;
+}
+
+#overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    z-index: 999;
+}
+
+#overlay.active {
+    display: block;
+}
+
+#multiplayerLobby {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #1a1a2e;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+}
+
+#multiplayerLobbyContent {
+    background: #16213e;
+    padding: 50px;
+    border-radius: 20px;
+    border: 4px solid #4ecca3;
+    max-width: 600px;
+    width: 90%;
+}
+
+.lobby-player {
+    padding: 12px;
+    margin: 8px 0;
+    background: #0f3460;
+    border-radius: 8px;
+    border-left: 4px solid #4ecca3;
+    font-size: 16px;
+}
+
+.lobby-player.you {
+    background: #1a4d3e;
+    border-left-color: #ffd700;
+}
+
+#multiplayerUI {
+    background: #16213e;
+    padding: 15px;
+    border-radius: 10px;
+    min-width: 220px;
+    max-width: 100%;
+}
+
+#multiplayerPlayerList {
+    font-size: 11px;
+}
+
+.mp-player {
+    padding: 6px 8px;
+    margin: 4px 0;
+    background: #0f3460;
+    border-radius: 5px;
+    border-left: 3px solid #ff6b9d;
+}
+
+.chat-message {
+    margin: 3px 0;
+    padding: 3px;
+    word-wrap: break-word;
+}
+
+#gearPanel {
+    background: #16213e;
+    padding: 15px;
+    border-radius: 10px;
+    min-width: 200px;
+    max-width: 100%;
+}
+
+.gear-slot {
+    padding: 8px;
+    margin: 5px 0;
+    background: #0f3460;
+    border-radius: 5px;
+    border-left: 4px solid #ffd700;
+    font-size: 11px;
+}
+
+.gear-slot.equipped {
+    background: #1a4d3e;
+    border-left-color: #4ecca3;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 1200px) {
+    #ui {
+        font-size: 12px;
+        gap: 15px;
+    }
+    
+    .bar {
+        width: 120px;
+    }
+    
+    #controls {
+        font-size: 10px;
+    }
+}
+
+@media (max-width: 900px) {
+    body {
+        padding: 5px;
+    }
+    
+    #gameContainer {
+        gap: 10px;
+    }
+    
+    #ui {
+        font-size: 11px;
+        gap: 10px;
+        padding: 10px 15px;
+    }
+    
+    .bar {
+        width: 100px;
+    }
+    
+    #inventory {
+        min-width: 250px;
+    }
+    
+    .weapon-item {
+        font-size: 11px;
+        padding: 6px;
+    }
+    
+    #gearPanel {
+        min-width: 180px;
+    }
+    
+    .gear-slot {
+        font-size: 10px;
+    }
+}
+
+@media (max-width: 600px) {
+    #ui {
+        font-size: 10px;
+        gap: 8px;
+    }
+    
+    .stat {
+        font-size: 10px;
+    }
+    
+    .bar {
+        width: 80px;
+        height: 16px;
+    }
+    
+    #inventory {
+        min-width: 200px;
+    }
+    
+    #controls {
+        font-size: 9px;
+    }
+}
