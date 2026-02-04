@@ -1,6 +1,5 @@
 // Multiplayer client handler using Supabase Realtime
-// Fixed version with proper room entry synchronization, enemy bullets, and items
-// FIXED: Non-host players now receive enemy updates even when host is in a different room
+// COMPLETE FIX: Multi-room enemy tracking + map sync fix
 
 const SUPABASE_URL = 'https://gdyhdywnlnaqwqtmwadx.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_VQbRK1tUFZIf37baWdeAKw_E5LZm6Sg';
@@ -21,7 +20,9 @@ const multiplayer = {
     lastEnemyUpdate: 0,
     lastEnemyBulletUpdate: 0,
     lastItemUpdate: 0,
-    enemyStateByRoom: new Map() // NEW: Track enemy states for all rooms (host only)
+    roomEnemies: new Map(), // NEW: roomKey -> enemy array (host only)
+    roomEnemyBullets: new Map(), // NEW: roomKey -> bullet array (host only)  
+    roomItems: new Map() // NEW: roomKey -> item array (host only)
 };
 
 // Initialize Supabase client
@@ -62,7 +63,6 @@ async function createMultiplayerRoom(difficulty) {
     try {
         const supabase = await initSupabase();
         
-        // Create room in database
         console.log('📝 Inserting room into database...');
         const { data: room, error: roomError } = await supabase
             .from('game_rooms')
@@ -83,7 +83,6 @@ async function createMultiplayerRoom(difficulty) {
         console.log('✅ Room created:', room);
         multiplayer.roomId = room.id;
 
-        // Add host as player
         console.log('👤 Adding host as player...');
         const { error: playerError } = await supabase.from('room_players').insert({
             room_id: room.id,
@@ -97,7 +96,6 @@ async function createMultiplayerRoom(difficulty) {
             throw playerError;
         }
 
-        // Subscribe to room channel
         console.log('📡 Subscribing to room channel...');
         await subscribeToRoom(room.id);
         showMultiplayerLobby();
@@ -121,7 +119,6 @@ async function joinMultiplayerRoom(roomCode) {
     try {
         const supabase = await initSupabase();
         
-        // Find room
         console.log('🔍 Looking for room...');
         const { data: room, error: roomError } = await supabase
             .from('game_rooms')
@@ -140,7 +137,6 @@ async function joinMultiplayerRoom(roomCode) {
         multiplayer.roomId = room.id;
         multiplayer.difficulty = room.difficulty;
 
-        // Add player to room
         console.log('👤 Adding player to room...');
         const { error: playerError } = await supabase.from('room_players').insert({
             room_id: room.id,
@@ -154,11 +150,9 @@ async function joinMultiplayerRoom(roomCode) {
             throw playerError;
         }
 
-        // Subscribe to room channel
         console.log('📡 Subscribing to room channel...');
         await subscribeToRoom(room.id);
         
-        // Notify others via broadcast
         console.log('📢 Broadcasting join...');
         multiplayer.channel.send({
             type: 'broadcast',
@@ -181,17 +175,15 @@ async function subscribeToRoom(roomId) {
     
     console.log('🔌 Creating channel for room:', roomId);
     
-    // IMPORTANT: Enable self-receive for broadcasts so host can see their own game_started event
     multiplayer.channel = supabase.channel(`room:${roomId}`, {
         config: { 
             broadcast: { 
-                self: true,  // host receives their own broadcasts
-                ack: true    // request acknowledgment
+                self: false,  // FIXED: Don't receive own broadcasts
+                ack: true
             } 
         }
     });
 
-    // Return a Promise that resolves only once the channel is truly SUBSCRIBED.
     return new Promise((resolve, reject) => {
         multiplayer.channel
             .on('broadcast', { event: 'player_joined' }, ({ payload }) => {
@@ -206,8 +198,11 @@ async function subscribeToRoom(roomId) {
                 refreshPlayerList();
             })
             .on('broadcast', { event: 'game_started' }, ({ payload }) => {
-                console.log('🎮 Game started broadcast received:', payload);
-                startMultiplayerGame(payload.difficulty, payload.dungeonSeed);
+                // FIXED: Only non-hosts respond (host starts game directly)
+                if (!multiplayer.isHost) {
+                    console.log('🎮 Game started broadcast received:', payload);
+                    startMultiplayerGame(payload.difficulty, payload.dungeonSeed);
+                }
             })
             .on('broadcast', { event: 'player_update' }, ({ payload }) => {
                 if (payload.playerId !== multiplayer.playerId) {
@@ -216,29 +211,22 @@ async function subscribeToRoom(roomId) {
             })
             .on('broadcast', { event: 'player_shot' }, ({ payload }) => {
                 if (payload.playerId !== multiplayer.playerId) {
-                    // Only show bullets if player is in same room
                     if (payload.gridX === game.gridX && payload.gridY === game.gridY) {
                         handleOtherPlayerShot(payload);
                     }
                 }
             })
             .on('broadcast', { event: 'enemies_sync' }, ({ payload }) => {
-                // FIXED: Non-hosts receive enemy updates for ANY room, not just current room
-                if (!multiplayer.isHost) {
-                    // Only apply if we're in that room
-                    if (payload.gridX === game.gridX && payload.gridY === game.gridY) {
-                        syncEnemies(payload.enemies);
-                    }
+                if (!multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
+                    syncEnemies(payload.enemies);
                 }
             })
             .on('broadcast', { event: 'enemy_bullets_sync' }, ({ payload }) => {
-                // All players receive enemy bullets from host
                 if (!multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
                     syncEnemyBullets(payload.bullets);
                 }
             })
             .on('broadcast', { event: 'items_sync' }, ({ payload }) => {
-                // All players receive items from host
                 if (!multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
                     syncItems(payload.items);
                 }
@@ -248,40 +236,22 @@ async function subscribeToRoom(roomId) {
             })
             .on('broadcast', { event: 'room_changed' }, ({ payload }) => {
                 handleOtherPlayerRoomChange(payload);
-                
-                // FIXED: If we're in the same room as another player, request enemy sync
-                if (!multiplayer.isHost && payload.gridX === game.gridX && payload.gridY === game.gridY) {
-                    // Request immediate enemy update for this room
-                    requestRoomEnemySync(game.gridX, game.gridY);
-                }
             })
             .on('broadcast', { event: 'spawn_indicators' }, ({ payload }) => {
-                // Receive spawn indicators from other players
                 if (payload.gridX === game.gridX && payload.gridY === game.gridY) {
                     syncSpawnIndicators(payload.indicators);
                 }
             })
             .on('broadcast', { event: 'room_cleared' }, ({ payload }) => {
-                // When a room is cleared by anyone, mark it as cleared locally
                 if (game.rooms[payload.gridY] && game.rooms[payload.gridY][payload.gridX]) {
                     const room = game.rooms[payload.gridY][payload.gridX];
                     room.cleared = true;
                     
-                    // If we're in that room, unblock doors and clear enemies
                     if (game.gridX === payload.gridX && game.gridY === payload.gridY) {
                         game.doors.forEach(door => door.blocked = false);
                         game.enemies = [];
                         console.log(`Room (${payload.gridX}, ${payload.gridY}) cleared by another player`);
                     }
-                }
-            })
-            // NEW: Request enemy sync for specific room
-            .on('broadcast', { event: 'request_enemy_sync' }, ({ payload }) => {
-                // Only host responds to sync requests
-                if (multiplayer.isHost) {
-                    console.log(`Enemy sync requested for room (${payload.gridX}, ${payload.gridY})`);
-                    // Send enemy state for the requested room immediately
-                    sendEnemyUpdateForRoom(payload.gridX, payload.gridY);
                 }
             })
             .subscribe((status) => {
@@ -294,22 +264,6 @@ async function subscribeToRoom(roomId) {
                     reject(new Error(`Subscription failed: ${status}`));
                 }
             });
-    });
-}
-
-// NEW: Request enemy sync for a specific room (non-host only)
-function requestRoomEnemySync(gridX, gridY) {
-    if (multiplayer.isHost || !multiplayer.enabled || !multiplayer.channel) return;
-    
-    console.log(`Requesting enemy sync for room (${gridX}, ${gridY})`);
-    multiplayer.channel.send({
-        type: 'broadcast',
-        event: 'request_enemy_sync',
-        payload: {
-            playerId: multiplayer.playerId,
-            gridX: gridX,
-            gridY: gridY
-        }
     });
 }
 
@@ -337,13 +291,15 @@ async function refreshPlayerList() {
         .eq('room_id', multiplayer.roomId);
     
     const listEl = document.getElementById('lobbyPlayerList');
-    listEl.innerHTML = players.map(p => {
-        const isYou = p.player_id === multiplayer.playerId;
-        const hostBadge = p.is_host ? ' 👑 HOST' : '';
-        return `<div class="lobby-player ${isYou ? 'you' : ''}">
-            ${p.player_name}${hostBadge}${isYou ? ' (You)' : ''}
-        </div>`;
-    }).join('');
+    if (listEl && players) {
+        listEl.innerHTML = players.map(p => {
+            const isYou = p.player_id === multiplayer.playerId;
+            const hostBadge = p.is_host ? ' 👑 HOST' : '';
+            return `<div class="lobby-player ${isYou ? 'you' : ''}">
+                ${p.player_name}${hostBadge}${isYou ? ' (You)' : ''}
+            </div>`;
+        }).join('');
+    }
 }
 
 // Host starts the game
@@ -352,8 +308,7 @@ async function hostStartGame() {
     
     console.log('🎮 Host starting game...');
     
-    // Generate dungeon seed for consistency
-    const dungeonSeed = Math.random();
+    const dungeonSeed = Date.now() + Math.floor(Math.random() * 10000);
     
     // Update room status
     const supabase = await initSupabase();
@@ -362,7 +317,8 @@ async function hostStartGame() {
         .update({ status: 'playing' })
         .eq('id', multiplayer.roomId);
     
-    // Broadcast game start to all players (including self)
+    // Broadcast to other players
+    console.log('📢 Broadcasting game_started to others with seed:', dungeonSeed);
     multiplayer.channel.send({
         type: 'broadcast',
         event: 'game_started',
@@ -371,6 +327,9 @@ async function hostStartGame() {
             dungeonSeed: dungeonSeed
         }
     });
+    
+    // FIXED: Start game locally for host (no waiting for broadcast)
+    startMultiplayerGame(multiplayer.difficulty, dungeonSeed);
 }
 
 // Start multiplayer game for all players
@@ -379,19 +338,16 @@ function startMultiplayerGame(difficulty, dungeonSeed) {
     console.log('Difficulty:', difficulty);
     console.log('Dungeon seed:', dungeonSeed);
     
-    // Hide lobby
     document.getElementById('multiplayerLobby').style.display = 'none';
     document.getElementById('gameContainer').style.display = 'flex';
     document.getElementById('multiplayerUI').style.display = 'block';
     
-    // Initialize game with difficulty
     game.difficulty = difficulty;
     const modifier = DIFFICULTY_MODIFIERS[difficulty];
     
-    // Update difficulty display
     document.getElementById('difficultyDisplay').textContent = modifier.displayName;
     
-    // Reset player stats for new game
+    // Reset player stats
     game.player.health = modifier.oneHPMode ? 1 : 100;
     game.player.maxHealth = modifier.oneHPMode ? 1 : 100;
     game.player.level = 1;
@@ -410,13 +366,58 @@ function startMultiplayerGame(difficulty, dungeonSeed) {
         ammoType: null
     };
     
-    // Generate dungeon (using seed for consistency across clients)
-    // Note: You may need to implement seeded dungeon generation
-    generateDungeon();
-    updateUI();
+    game.visitedRooms.clear();
     
-    // Resume game
+    // CRITICAL: Use seeded dungeon generation
+    console.log('🗺️ Generating synchronized dungeon with seed:', dungeonSeed);
+    generateDungeonWithSeed(dungeonSeed);
+    
+    updateUI();
+    updateMultiplayerUI();
+    
     game.paused = false;
+}
+
+// NEW: Store current room's enemies before leaving (host only)
+function storeCurrentRoomState() {
+    if (!multiplayer.enabled || !multiplayer.isHost) return;
+    
+    const roomKey = `${game.gridX},${game.gridY}`;
+    
+    // Deep copy to prevent reference issues
+    multiplayer.roomEnemies.set(roomKey, game.enemies.map(e => ({ ...e })));
+    multiplayer.roomEnemyBullets.set(roomKey, game.enemyBullets.map(b => ({ ...b })));
+    multiplayer.roomItems.set(roomKey, game.items.map(i => ({ ...i, data: i.data ? { ...i.data } : null })));
+    
+    console.log(`💾 Stored state for room (${game.gridX}, ${game.gridY}):`, {
+        enemies: game.enemies.length,
+        bullets: game.enemyBullets.length,
+        items: game.items.length
+    });
+}
+
+// NEW: Load room's enemies when entering (host only)
+function loadRoomState(gridX, gridY) {
+    if (!multiplayer.enabled || !multiplayer.isHost) return;
+    
+    const roomKey = `${gridX},${gridY}`;
+    
+    const storedEnemies = multiplayer.roomEnemies.get(roomKey);
+    const storedBullets = multiplayer.roomEnemyBullets.get(roomKey);
+    const storedItems = multiplayer.roomItems.get(roomKey);
+    
+    if (storedEnemies) {
+        game.enemies = storedEnemies.map(e => ({ ...e }));
+        console.log(`📦 Loaded ${game.enemies.length} enemies for room (${gridX}, ${gridY})`);
+    }
+    
+    if (storedBullets) {
+        game.enemyBullets = storedBullets.map(b => ({ ...b }));
+    }
+    
+    if (storedItems) {
+        game.items = storedItems.map(i => ({ ...i, data: i.data ? { ...i.data } : null }));
+    }
 }
 
 // Send player update
@@ -439,8 +440,8 @@ function sendPlayerUpdate() {
             angle: game.player.angle,
             health: game.player.health,
             currentWeapon: weapon ? weapon.name : 'None',
-            gridX: game.gridX,  // FIXED: Include room coordinates
-            gridY: game.gridY   // FIXED: Include room coordinates
+            gridX: game.gridX,
+            gridY: game.gridY
         }
     });
 }
@@ -456,25 +457,24 @@ function updateOtherPlayer(data) {
             angle: data.angle,
             health: data.health,
             currentWeapon: data.currentWeapon,
-            gridX: data.gridX,  // FIXED: Store room coordinates
-            gridY: data.gridY   // FIXED: Store room coordinates
+            gridX: data.gridX,
+            gridY: data.gridY
         };
         multiplayer.players.set(data.playerId, player);
     } else {
-        // Store target position for interpolation
         player.targetX = data.x;
         player.targetY = data.y;
         player.angle = data.angle;
         player.health = data.health;
         player.currentWeapon = data.currentWeapon;
-        player.gridX = data.gridX;  // FIXED: Update room coordinates
-        player.gridY = data.gridY;  // FIXED: Update room coordinates
+        player.gridX = data.gridX;
+        player.gridY = data.gridY;
     }
     
     updateMultiplayerUI();
 }
 
-// Interpolate other players' positions for smooth movement
+// Interpolate other players' positions
 function interpolatePlayers(deltaTime) {
     if (!multiplayer.enabled) return;
     
@@ -557,8 +557,6 @@ function handleOtherPlayerShot(data) {
 // Sync spawn indicators
 function syncSpawnIndicators(indicators) {
     console.log('Syncing spawn indicators:', indicators);
-    
-    // Clear existing indicators for this room
     game.enemySpawnIndicators = indicators.map(ind => ({
         x: ind.x,
         y: ind.y,
@@ -571,20 +569,17 @@ function syncSpawnIndicators(indicators) {
 
 // Sync enemies from host
 function syncEnemies(enemiesData) {
-    // Create a map of existing enemies by position (approximate)
     const existingEnemies = new Map();
     game.enemies.forEach(enemy => {
         const key = `${Math.round(enemy.x / 10)}_${Math.round(enemy.y / 10)}`;
         existingEnemies.set(key, enemy);
     });
     
-    // Update or create enemies from sync data
     const newEnemies = enemiesData.map(eData => {
         const key = `${Math.round(eData.x / 10)}_${Math.round(eData.y / 10)}`;
         let enemy = existingEnemies.get(key);
         
         if (enemy) {
-            // Update existing enemy
             enemy.targetX = eData.x;
             enemy.targetY = eData.y;
             enemy.health = eData.health;
@@ -598,7 +593,6 @@ function syncEnemies(enemiesData) {
             enemy.actualType = eData.actualType;
             existingEnemies.delete(key);
         } else {
-            // Create new enemy
             enemy = {
                 x: eData.x,
                 y: eData.y,
@@ -677,46 +671,17 @@ function interpolateEnemies(deltaTime) {
     });
 }
 
-// MODIFIED: Send enemy updates for current room (host only)
+// Send enemy updates (host only)
 function sendEnemyUpdate() {
     if (!multiplayer.enabled || !multiplayer.isHost || !multiplayer.channel) return;
-    
-    sendEnemyUpdateForRoom(game.gridX, game.gridY);
-}
-
-// NEW: Send enemy updates for a specific room (host only)
-function sendEnemyUpdateForRoom(gridX, gridY) {
-    if (!multiplayer.enabled || !multiplayer.isHost || !multiplayer.channel) return;
-
-    // Get enemies for the specified room
-    let roomEnemies = [];
-    
-    // If it's the current room, use live enemy data
-    if (gridX === game.gridX && gridY === game.gridY) {
-        roomEnemies = game.enemies;
-        
-        // Also store this room's state
-        const roomKey = `${gridX},${gridY}`;
-        multiplayer.enemyStateByRoom.set(roomKey, {
-            enemies: game.enemies.map(e => ({ ...e })),
-            lastUpdate: Date.now()
-        });
-    } else {
-        // Try to get stored state for this room
-        const roomKey = `${gridX},${gridY}`;
-        const roomState = multiplayer.enemyStateByRoom.get(roomKey);
-        if (roomState) {
-            roomEnemies = roomState.enemies;
-        }
-    }
 
     multiplayer.channel.send({
         type: 'broadcast',
         event: 'enemies_sync',
         payload: {
-            gridX: gridX,
-            gridY: gridY,
-            enemies: roomEnemies.map(e => ({
+            gridX: game.gridX,
+            gridY: game.gridY,
+            enemies: game.enemies.map(e => ({
                 x: e.x,
                 y: e.y,
                 health: e.health,
@@ -857,7 +822,9 @@ async function leaveMultiplayer() {
     multiplayer.players.clear();
     multiplayer.channel = null;
     multiplayer.roomId = null;
-    multiplayer.enemyStateByRoom.clear();
+    multiplayer.roomEnemies.clear();
+    multiplayer.roomEnemyBullets.clear();
+    multiplayer.roomItems.clear();
 
     document.getElementById('multiplayerLobby').style.display = 'none';
     document.getElementById('multiplayerUI').style.display = 'none';
@@ -926,4 +893,4 @@ function handleOtherPlayerRoomChange(data) {
     }
 }
 
-console.log('✅ Multiplayer.js loaded - FIXED: Enemy sync now works across all rooms');
+console.log('✅ Multiplayer.js loaded - COMPLETE FIX: Map sync + multi-room enemy tracking');
