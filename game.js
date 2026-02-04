@@ -149,6 +149,28 @@ function tryEnterDoor() {
     }
 }
 
+// Get nearest player (for enemy AI in multiplayer)
+function getNearestPlayer(enemyX, enemyY) {
+    let nearestPlayer = game.player;
+    let minDist = Math.hypot(game.player.x - enemyX, game.player.y - enemyY);
+    
+    // Check other players in multiplayer
+    if (multiplayer.enabled && multiplayer.players.size > 0) {
+        multiplayer.players.forEach((otherPlayer, playerId) => {
+            // Only consider players in the same room
+            if (otherPlayer.gridX === game.gridX && otherPlayer.gridY === game.gridY) {
+                const dist = Math.hypot(otherPlayer.x - enemyX, otherPlayer.y - enemyY);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestPlayer = otherPlayer;
+                }
+            }
+        });
+    }
+    
+    return { player: nearestPlayer, distance: minDist };
+}
+
 // Main update loop with delta time
 function update(deltaTime) {
     if (game.shopOpen || game.paused) return;
@@ -278,6 +300,7 @@ function update(deltaTime) {
             continue;
         }
 
+        // Check collision with local player
         const dist = Math.hypot(bullet.x - game.player.x, bullet.y - game.player.y);
         if (dist < game.player.size) {
             const stats = getPlayerStats();
@@ -296,6 +319,21 @@ function update(deltaTime) {
                 createParticles(game.player.x, game.player.y, '#ffffff', 5);
             }
             game.enemyBullets.splice(i, 1);
+            continue;
+        }
+
+        // Check collision with other players (in multiplayer)
+        if (multiplayer.enabled && multiplayer.players.size > 0) {
+            multiplayer.players.forEach((otherPlayer, playerId) => {
+                if (otherPlayer.gridX === game.gridX && otherPlayer.gridY === game.gridY) {
+                    const otherDist = Math.hypot(bullet.x - otherPlayer.x, bullet.y - otherPlayer.y);
+                    if (otherDist < game.player.size) {
+                        // Notify that player about damage (they'll handle their own health)
+                        createParticles(otherPlayer.x, otherPlayer.y, '#ff6b9d', 8);
+                        game.enemyBullets.splice(i, 1);
+                    }
+                }
+            });
         }
     }
 
@@ -309,7 +347,9 @@ function update(deltaTime) {
         game.enemies.forEach(enemy => {
             let moveX = 0;
             let moveY = 0;
-            const distToPlayer = Math.hypot(game.player.x - enemy.x, game.player.y - enemy.y);
+            
+            // Get nearest player (works in both single and multiplayer)
+            const { player: targetPlayer, distance: distToPlayer } = getNearestPlayer(enemy.x, enemy.y);
 
         if (enemy.type === ENEMY_TYPES.DASHER) {
             if (enemy.state === 'idle') {
@@ -317,7 +357,7 @@ function update(deltaTime) {
                     enemy.state = 'windup';
                     enemy.windupTime = now;
                     
-                    const angleToPlayer = Math.atan2(game.player.y - enemy.y, game.player.x - enemy.x);
+                    const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
                     enemy.dashDirection = {
                         x: Math.cos(angleToPlayer),
                         y: Math.sin(angleToPlayer)
@@ -389,7 +429,7 @@ function update(deltaTime) {
                 }
             }
             
-            const angleToPlayer = Math.atan2(game.player.y - enemy.y, game.player.x - enemy.x);
+            const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
             if (distToPlayer < 250) {
                 moveX = -Math.cos(angleToPlayer) * enemy.speed * deltaTime;
                 moveY = -Math.sin(angleToPlayer) * enemy.speed * deltaTime;
@@ -398,7 +438,7 @@ function update(deltaTime) {
                 moveY = Math.sin(angleToPlayer) * enemy.speed * deltaTime;
             }
         } else if (enemy.type === ENEMY_TYPES.BOSS) {
-            const angleToPlayer = Math.atan2(game.player.y - enemy.y, game.player.x - enemy.x);
+            const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
             
             if (distToPlayer > 250) {
                 moveX = Math.cos(angleToPlayer) * enemy.speed * deltaTime;
@@ -423,7 +463,7 @@ function update(deltaTime) {
             }
         } else if (enemy.type === ENEMY_TYPES.SUMMONED) {
             // Summoned enemies behave like their actual type
-            const angleToPlayer = Math.atan2(game.player.y - enemy.y, game.player.x - enemy.x);
+            const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
             
             if (enemy.actualType === ENEMY_TYPES.CHASER) {
                 const randomOffset = (Math.random() - 0.5) * 1.5;
@@ -453,13 +493,13 @@ function update(deltaTime) {
                 }
             }
         } else if (enemy.type === ENEMY_TYPES.CHASER) {
-            const angleToPlayer = Math.atan2(game.player.y - enemy.y, game.player.x - enemy.x);
+            const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
             const randomOffset = (Math.random() - 0.5) * 1.5;
             const angle = angleToPlayer + randomOffset;
             moveX = Math.cos(angle) * enemy.speed * deltaTime;
             moveY = Math.sin(angle) * enemy.speed * deltaTime;
         } else if (enemy.type === ENEMY_TYPES.WANDERER) {
-            const angleToPlayer = Math.atan2(game.player.y - enemy.y, game.player.x - enemy.x);
+            const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
             enemy.wanderTimer++;
             if (enemy.wanderTimer > 60) {
                 enemy.wanderAngle += (Math.random() - 0.5) * 0.5;
@@ -484,7 +524,7 @@ function update(deltaTime) {
                 moveY = Math.sin(orbitAngle) * enemy.speed * deltaTime;
             }
         } else if (enemy.type === ENEMY_TYPES.SHOOTER) {
-            const angleToPlayer = Math.atan2(game.player.y - enemy.y, game.player.x - enemy.x);
+            const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
             
             if (distToPlayer < 200) {
                 moveX = -Math.cos(angleToPlayer) * enemy.speed * deltaTime;
@@ -521,7 +561,8 @@ function update(deltaTime) {
             }
         }
 
-        if (distToPlayer < game.player.size + enemy.size) {
+        // Check collision with local player
+        if (distToPlayer < game.player.size + enemy.size && targetPlayer === game.player) {
             const stats = getPlayerStats();
             const modifier = getDifficultyModifier();
             const baseContactDamage = Math.max(0.1, 0.2 - (stats.defense * 0.005));
