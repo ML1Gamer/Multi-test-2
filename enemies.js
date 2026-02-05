@@ -367,6 +367,8 @@ function handleEnemyDeath(enemy) {
     }
 }
 
+// PATCH FOR enemies.js - Replace the updateEnemySpawnIndicators function
+
 function updateEnemySpawnIndicators() {
     const now = Date.now();
     
@@ -381,50 +383,52 @@ function updateEnemySpawnIndicators() {
         
         // Check if it's time to spawn
         if (now >= indicator.spawnTime) {
-            // MULTIPLAYER FIX: All players spawn their own enemies from indicators
-            // Host will sync the authoritative state shortly after
+            // MULTIPLAYER FIX: Only host or singleplayer spawns actual enemies
+            // Non-hosts will receive enemies via sync from host
+            const shouldSpawn = !multiplayer.enabled || multiplayer.isHost;
             
-            // Actually spawn the enemy
-            if (indicator.isBoss) {
-                const modifier = getDifficultyModifier();
-                const baseHealth = 300 + game.player.level * 50;
-                const boss = {
-                    x: indicator.x,
-                    y: indicator.y,
-                    size: 35,
-                    health: baseHealth * modifier.enemyHealthMult,
-                    maxHealth: baseHealth * modifier.enemyHealthMult,
-                    speed: 1.5,
-                    color: '#8b0000',
-                    type: ENEMY_TYPES.BOSS,
-                    wanderAngle: Math.random() * Math.PI * 2,
-                    wanderTimer: 0,
-                    lastShot: 0,
-                    shotPattern: 0
-                };
-                game.enemies.push(boss);
-            } else {
-                spawnEnemy(indicator.x, indicator.y, indicator.type);
+            if (shouldSpawn) {
+                // Actually spawn the enemy
+                if (indicator.isBoss) {
+                    const modifier = getDifficultyModifier();
+                    const baseHealth = 300 + game.player.level * 50;
+                    const boss = {
+                        x: indicator.x,
+                        y: indicator.y,
+                        size: 35,
+                        health: baseHealth * modifier.enemyHealthMult,
+                        maxHealth: baseHealth * modifier.enemyHealthMult,
+                        speed: 1.5,
+                        color: '#8b0000',
+                        type: ENEMY_TYPES.BOSS,
+                        wanderAngle: Math.random() * Math.PI * 2,
+                        wanderTimer: 0,
+                        lastShot: 0,
+                        shotPattern: 0
+                    };
+                    game.enemies.push(boss);
+                } else {
+                    spawnEnemy(indicator.x, indicator.y, indicator.type);
+                }
+                
+                // Create spawn particles
+                createParticles(indicator.x, indicator.y, '#e94560', 20);
+                
+                // Play spawn sound
+                playEnemySpawnSound();
+                
+                // Host syncs enemies immediately after spawning
+                if (multiplayer.enabled && multiplayer.isHost) {
+                    setTimeout(() => {
+                        sendEnemyUpdate();
+                    }, 100);
+                }
             }
             
-            // Create spawn particles
-            createParticles(indicator.x, indicator.y, '#e94560', 20);
-            
-            // Play spawn sound
-            playEnemySpawnSound();
-            
-            // Remove the indicator
+            // Remove the indicator (for all players)
             game.enemySpawnIndicators.splice(i, 1);
-            
-            // Host syncs enemies immediately after spawning
-            if (multiplayer.enabled && multiplayer.isHost) {
-                setTimeout(() => {
-                    sendEnemyUpdate();
-                }, 100);
-            }
         }
     }
 }
-
 
 // Note: Dasher and Necromancer AI is handled inline in game.js update() loop
