@@ -1,5 +1,5 @@
 // Multiplayer client handler using Supabase Realtime
-// COMPLETE FIX: Multi-room enemy tracking + map sync fix
+// COMPLETE FIX: Multi-room enemy tracking + map sync fix + Non-host enemy spawning
 
 const SUPABASE_URL = 'https://gdyhdywnlnaqwqtmwadx.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_VQbRK1tUFZIf37baWdeAKw_E5LZm6Sg';
@@ -251,6 +251,61 @@ async function subscribeToRoom(roomId) {
                         game.doors.forEach(door => door.blocked = false);
                         game.enemies = [];
                         console.log(`Room (${payload.gridX}, ${payload.gridY}) cleared by another player`);
+                    }
+                }
+            })
+            .on('broadcast', { event: 'request_enemy_sync' }, ({ payload }) => {
+                // Non-host player is requesting enemy sync after spawning
+                // Host should immediately send enemy data for that room
+                if (multiplayer.isHost) {
+                    console.log(`🎮 Host received enemy sync request from ${payload.playerId} for room (${payload.gridX}, ${payload.gridY})`);
+                    
+                    // If host is in that room, send current enemies
+                    if (game.gridX === payload.gridX && game.gridY === payload.gridY) {
+                        setTimeout(() => {
+                            sendEnemyUpdate();
+                            if (game.enemySpawnIndicators.length > 0) {
+                                sendSpawnIndicators();
+                            }
+                        }, 200);
+                    } else {
+                        // Host not in that room - check stored state
+                        const roomKey = `${payload.gridX},${payload.gridY}`;
+                        const storedEnemies = multiplayer.roomEnemies.get(roomKey);
+                        
+                        if (storedEnemies && storedEnemies.length > 0) {
+                            // Send stored enemy state
+                            multiplayer.channel.send({
+                                type: 'broadcast',
+                                event: 'enemies_sync',
+                                payload: {
+                                    gridX: payload.gridX,
+                                    gridY: payload.gridY,
+                                    enemies: storedEnemies.map(e => ({
+                                        x: e.x,
+                                        y: e.y,
+                                        health: e.health,
+                                        maxHealth: e.maxHealth,
+                                        type: e.type,
+                                        size: e.size,
+                                        color: e.color,
+                                        speed: e.speed,
+                                        wanderAngle: e.wanderAngle,
+                                        wanderTimer: e.wanderTimer,
+                                        lastShot: e.lastShot,
+                                        shotPattern: e.shotPattern,
+                                        state: e.state,
+                                        dashDirection: e.dashDirection,
+                                        windupTime: e.windupTime,
+                                        dashStartTime: e.dashStartTime,
+                                        lastDash: e.lastDash,
+                                        lastSummon: e.lastSummon,
+                                        actualType: e.actualType
+                                    }))
+                                }
+                            });
+                            console.log(`📤 Sent stored enemies for room (${payload.gridX}, ${payload.gridY})`);
+                        }
                     }
                 }
             })
@@ -893,4 +948,4 @@ function handleOtherPlayerRoomChange(data) {
     }
 }
 
-console.log('✅ Multiplayer.js loaded - COMPLETE FIX: Map sync + multi-room enemy tracking');
+console.log('✅ Multiplayer.js loaded - COMPLETE FIX: Non-host enemy spawning + AI sync');
