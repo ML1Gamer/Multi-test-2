@@ -491,62 +491,161 @@ function tickAllRoomEnemies(deltaTime) {
         // Skip current room (it's already being updated in main loop)
         if (gridX === game.gridX && gridY === game.gridY) return;
         
+        // Find players in this room
+        const playersInRoom = [];
+        
+        // Check if local host player is in this room (shouldn't be, but check anyway)
+        if (game.gridX === gridX && game.gridY === gridY) {
+            playersInRoom.push({ x: game.player.x, y: game.player.y });
+        }
+        
+        // Check other players
+        multiplayer.players.forEach((otherPlayer) => {
+            if (otherPlayer.gridX === gridX && otherPlayer.gridY === gridY) {
+                playersInRoom.push({ x: otherPlayer.x, y: otherPlayer.y });
+            }
+        });
+        
         // Tick each enemy's AI
         enemies.forEach(enemy => {
-            // Basic AI ticking without player target
-            if (enemy.type === ENEMY_TYPES.WANDERER) {
+            // Find nearest player in this room
+            let targetPlayer = null;
+            let minDist = Infinity;
+            
+            playersInRoom.forEach(player => {
+                const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+                if (dist < minDist) {
+                    minDist = dist;
+                    targetPlayer = player;
+                }
+            });
+            
+            // If no players in room, do idle behavior
+            if (!targetPlayer) {
+                // Basic idle movement for wanderers
+                if (enemy.type === ENEMY_TYPES.WANDERER) {
+                    enemy.wanderTimer++;
+                    if (enemy.wanderTimer > 60) {
+                        enemy.wanderAngle += (Math.random() - 0.5) * 0.5;
+                        enemy.wanderTimer = 0;
+                    }
+                    
+                    const moveX = Math.cos(enemy.wanderAngle) * enemy.speed * deltaTime * 0.3;
+                    const moveY = Math.sin(enemy.wanderAngle) * enemy.speed * deltaTime * 0.3;
+                    
+                    // Basic boundary checking
+                    const newX = enemy.x + moveX;
+                    const newY = enemy.y + moveY;
+                    
+                    if (newX > 50 && newX < ROOM_WIDTH - 50) enemy.x = newX;
+                    if (newY > 50 && newY < ROOM_HEIGHT - 50) enemy.y = newY;
+                }
+                
+                // Dasher state machine (idle when no players)
+                if (enemy.type === ENEMY_TYPES.DASHER) {
+                    if (enemy.state === 'cooldown') {
+                        if (now - (enemy.cooldownStartTime || 0) >= (enemy.postDashCooldown || 800)) {
+                            enemy.state = 'idle';
+                        }
+                    }
+                }
+                return; // Skip rest of AI if no target
+            }
+            
+            // Run AI with target player
+            const angleToPlayer = Math.atan2(targetPlayer.y - enemy.y, targetPlayer.x - enemy.x);
+            const distToPlayer = minDist;
+            
+            if (enemy.type === ENEMY_TYPES.CHASER) {
+                const randomOffset = (Math.random() - 0.5) * 1.5;
+                const angle = angleToPlayer + randomOffset;
+                const moveX = Math.cos(angle) * enemy.speed * deltaTime;
+                const moveY = Math.sin(angle) * enemy.speed * deltaTime;
+                
+                enemy.x += moveX;
+                enemy.y += moveY;
+            } else if (enemy.type === ENEMY_TYPES.WANDERER) {
                 enemy.wanderTimer++;
                 if (enemy.wanderTimer > 60) {
                     enemy.wanderAngle += (Math.random() - 0.5) * 0.5;
                     enemy.wanderTimer = 0;
                 }
                 
-                const moveX = Math.cos(enemy.wanderAngle) * enemy.speed * deltaTime * 0.5;
-                const moveY = Math.sin(enemy.wanderAngle) * enemy.speed * deltaTime * 0.5;
+                const orbitAngle = angleToPlayer + Math.PI / 2 + enemy.wanderAngle;
+                let moveX = 0, moveY = 0;
                 
-                // Basic boundary checking (room bounds)
-                const newX = enemy.x + moveX;
-                const newY = enemy.y + moveY;
+                if (distToPlayer < 100) {
+                    const retreatAngle = angleToPlayer + Math.PI + enemy.wanderAngle * 0.5;
+                    moveX = Math.cos(retreatAngle) * enemy.speed * deltaTime;
+                    moveY = Math.sin(retreatAngle) * enemy.speed * deltaTime;
+                } else if (distToPlayer > 200) {
+                    const approachAngle = angleToPlayer + enemy.wanderAngle * 0.3;
+                    moveX = Math.cos(approachAngle) * enemy.speed * deltaTime;
+                    moveY = Math.sin(approachAngle) * enemy.speed * deltaTime;
+                } else {
+                    moveX = Math.cos(orbitAngle) * enemy.speed * deltaTime;
+                    moveY = Math.sin(orbitAngle) * enemy.speed * deltaTime;
+                }
                 
-                if (newX > 50 && newX < ROOM_WIDTH - 50) enemy.x = newX;
-                if (newY > 50 && newY < ROOM_HEIGHT - 50) enemy.y = newY;
+                enemy.x += moveX;
+                enemy.y += moveY;
+            } else if (enemy.type === ENEMY_TYPES.SHOOTER) {
+                let moveX = 0, moveY = 0;
+                
+                if (distToPlayer < 200) {
+                    moveX = -Math.cos(angleToPlayer) * enemy.speed * deltaTime;
+                    moveY = -Math.sin(angleToPlayer) * enemy.speed * deltaTime;
+                } else if (distToPlayer > 300) {
+                    moveX = Math.cos(angleToPlayer) * enemy.speed * deltaTime;
+                    moveY = Math.sin(angleToPlayer) * enemy.speed * deltaTime;
+                }
+                
+                enemy.x += moveX;
+                enemy.y += moveY;
+                
+                // Shooting handled separately - would need to store bullets per room too
             } else if (enemy.type === ENEMY_TYPES.DASHER) {
-                // Update dasher state machine
-                if (enemy.state === 'windup') {
-                    if (now - enemy.windupTime >= enemy.windupDuration) {
+                if (enemy.state === 'idle') {
+                    if (now - (enemy.lastDash || 0) > (enemy.dashCooldown || 1500)) {
+                        enemy.state = 'windup';
+                        enemy.windupTime = now;
+                        enemy.dashDirection = {
+                            x: Math.cos(angleToPlayer),
+                            y: Math.sin(angleToPlayer)
+                        };
+                    }
+                } else if (enemy.state === 'windup') {
+                    if (now - enemy.windupTime >= (enemy.windupDuration || 600)) {
                         enemy.state = 'dashing';
                         enemy.dashStartTime = now;
                     }
                 } else if (enemy.state === 'dashing') {
-                    if (now - enemy.dashStartTime >= enemy.dashDuration) {
+                    if (now - enemy.dashStartTime >= (enemy.dashDuration || 400)) {
                         enemy.state = 'cooldown';
                         enemy.cooldownStartTime = now;
                         enemy.lastDash = now;
+                    } else {
+                        const dashSpeed = (enemy.dashSpeed || 15) * deltaTime;
+                        enemy.x += enemy.dashDirection.x * dashSpeed;
+                        enemy.y += enemy.dashDirection.y * dashSpeed;
                     }
                 } else if (enemy.state === 'cooldown') {
-                    if (now - enemy.cooldownStartTime >= enemy.postDashCooldown) {
+                    if (now - enemy.cooldownStartTime >= (enemy.postDashCooldown || 800)) {
                         enemy.state = 'idle';
                     }
-                } else if (enemy.state === 'idle') {
-                    if (now - enemy.lastDash > enemy.dashCooldown) {
-                        enemy.state = 'windup';
-                        enemy.windupTime = now;
-                        // Random dash direction when no players in room
-                        const angle = Math.random() * Math.PI * 2;
-                        enemy.dashDirection = {
-                            x: Math.cos(angle),
-                            y: Math.sin(angle)
-                        };
-                    }
                 }
-            } else if (enemy.type === ENEMY_TYPES.NECROMANCER) {
-                // Necromancer just waits for players
-                // Basic idle movement
-                if (Math.random() < 0.01) {
-                    enemy.x += (Math.random() - 0.5) * 2;
-                    enemy.y += (Math.random() - 0.5) * 2;
+            } else if (enemy.type === ENEMY_TYPES.BOSS) {
+                if (distToPlayer > 250) {
+                    const moveX = Math.cos(angleToPlayer) * enemy.speed * deltaTime;
+                    const moveY = Math.sin(angleToPlayer) * enemy.speed * deltaTime;
+                    enemy.x += moveX;
+                    enemy.y += moveY;
                 }
             }
+            
+            // Keep enemies in bounds
+            enemy.x = Math.max(40, Math.min(ROOM_WIDTH - 40, enemy.x));
+            enemy.y = Math.max(40, Math.min(ROOM_HEIGHT - 40, enemy.y));
         });
         
         // Update the stored enemies
