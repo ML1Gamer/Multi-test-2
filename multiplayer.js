@@ -256,32 +256,50 @@ async function subscribeToRoom(roomId) {
             })
             .on('broadcast', { event: 'request_enemy_sync' }, ({ payload }) => {
                 // Non-host player is requesting enemy sync after spawning
-                // Host should immediately send enemy data for that room
+                // Host should immediately spawn those enemies and start managing them
                 if (multiplayer.isHost) {
                     console.log(`🎮 Host received enemy sync request from ${payload.playerId} for room (${payload.gridX}, ${payload.gridY})`);
                     
-                    // If host is in that room, send current enemies
-                    if (game.gridX === payload.gridX && game.gridY === payload.gridY) {
-                        setTimeout(() => {
-                            sendEnemyUpdate();
-                            if (game.enemySpawnIndicators.length > 0) {
-                                sendSpawnIndicators();
-                            }
-                        }, 200);
-                    } else {
-                        // Host not in that room - check stored state
-                        const roomKey = `${payload.gridX},${payload.gridY}`;
-                        const storedEnemies = multiplayer.roomEnemies.get(roomKey);
+                    const roomKey = `${payload.gridX},${payload.gridY}`;
+                    
+                    // Check if we already have enemies for this room
+                    const existingEnemies = multiplayer.roomEnemies.get(roomKey);
+                    
+                    if (!existingEnemies || existingEnemies.length === 0) {
+                        // Create enemies from the spawn indicators
+                        console.log(`📦 Host spawning enemies for room (${payload.gridX}, ${payload.gridY})`);
                         
-                        if (storedEnemies && storedEnemies.length > 0) {
-                            // Send stored enemy state
+                        const newEnemies = payload.enemies.map(indicator => {
+                            const modifier = getDifficultyModifier();
+                            const baseHealth = 30 + game.player.level * 5;
+                            
+                            return {
+                                x: indicator.x,
+                                y: indicator.y,
+                                size: 18,
+                                health: baseHealth * modifier.enemyHealthMult,
+                                maxHealth: baseHealth * modifier.enemyHealthMult,
+                                speed: indicator.type === ENEMY_TYPES.SHOOTER ? 0.8 : (indicator.type === ENEMY_TYPES.WANDERER ? 1.2 : 1.0),
+                                color: indicator.type === ENEMY_TYPES.SHOOTER ? '#ff6b6b' : (indicator.type === ENEMY_TYPES.WANDERER ? '#4ecdc4' : '#95e1d3'),
+                                type: indicator.type,
+                                wanderAngle: Math.random() * Math.PI * 2,
+                                wanderTimer: 0,
+                                lastShot: 0
+                            };
+                        });
+                        
+                        // Store the enemies
+                        multiplayer.roomEnemies.set(roomKey, newEnemies);
+                        
+                        // Immediately broadcast the enemy state
+                        setTimeout(() => {
                             multiplayer.channel.send({
                                 type: 'broadcast',
                                 event: 'enemies_sync',
                                 payload: {
                                     gridX: payload.gridX,
                                     gridY: payload.gridY,
-                                    enemies: storedEnemies.map(e => ({
+                                    enemies: newEnemies.map(e => ({
                                         x: e.x,
                                         y: e.y,
                                         health: e.health,
@@ -292,22 +310,49 @@ async function subscribeToRoom(roomId) {
                                         speed: e.speed,
                                         wanderAngle: e.wanderAngle,
                                         wanderTimer: e.wanderTimer,
-                                        lastShot: e.lastShot,
-                                        shotPattern: e.shotPattern,
-                                        state: e.state,
-                                        dashDirection: e.dashDirection,
-                                        windupTime: e.windupTime,
-                                        dashStartTime: e.dashStartTime,
-                                        lastDash: e.lastDash,
-                                        lastSummon: e.lastSummon,
-                                        actualType: e.actualType
+                                        lastShot: e.lastShot
                                     }))
                                 }
                             });
-                            console.log(`📤 Sent stored enemies for room (${payload.gridX}, ${payload.gridY})`);
-                        }
+                            console.log(`📤 Sent ${newEnemies.length} enemies for room (${payload.gridX}, ${payload.gridY})`);
+                        }, 100);
+                    } else {
+                        // Already have enemies, just send them
+                        multiplayer.channel.send({
+                            type: 'broadcast',
+                            event: 'enemies_sync',
+                            payload: {
+                                gridX: payload.gridX,
+                                gridY: payload.gridY,
+                                enemies: existingEnemies.map(e => ({
+                                    x: e.x,
+                                    y: e.y,
+                                    health: e.health,
+                                    maxHealth: e.maxHealth,
+                                    type: e.type,
+                                    size: e.size,
+                                    color: e.color,
+                                    speed: e.speed,
+                                    wanderAngle: e.wanderAngle,
+                                    wanderTimer: e.wanderTimer,
+                                    lastShot: e.lastShot,
+                                    shotPattern: e.shotPattern,
+                                    state: e.state,
+                                    dashDirection: e.dashDirection,
+                                    windupTime: e.windupTime,
+                                    dashStartTime: e.dashStartTime,
+                                    lastDash: e.lastDash,
+                                    lastSummon: e.lastSummon,
+                                    actualType: e.actualType
+                                }))
+                            }
+                        });
                     }
                 }
+            })
+            .on('broadcast', { event: 'enemy_sync_confirmed' }, ({ payload }) => {
+                // Host confirmed it's managing enemies for this room
+                console.log(`✅ Host confirmed managing enemies for room (${payload.gridX}, ${payload.gridY})`);
             })
             .subscribe((status) => {
                 console.log('📡 Channel subscription status:', status);
@@ -431,6 +476,132 @@ function startMultiplayerGame(difficulty, dungeonSeed) {
     updateMultiplayerUI();
     
     game.paused = false;
+}
+
+// NEW: Tick AI for enemies in all rooms (host only)
+function tickAllRoomEnemies(deltaTime) {
+    if (!multiplayer.enabled || !multiplayer.isHost) return;
+    
+    const now = Date.now();
+    
+    // Tick enemies in other rooms
+    multiplayer.roomEnemies.forEach((enemies, roomKey) => {
+        const [gridX, gridY] = roomKey.split(',').map(Number);
+        
+        // Skip current room (it's already being updated in main loop)
+        if (gridX === game.gridX && gridY === game.gridY) return;
+        
+        // Tick each enemy's AI
+        enemies.forEach(enemy => {
+            // Basic AI ticking without player target
+            if (enemy.type === ENEMY_TYPES.WANDERER) {
+                enemy.wanderTimer++;
+                if (enemy.wanderTimer > 60) {
+                    enemy.wanderAngle += (Math.random() - 0.5) * 0.5;
+                    enemy.wanderTimer = 0;
+                }
+                
+                const moveX = Math.cos(enemy.wanderAngle) * enemy.speed * deltaTime * 0.5;
+                const moveY = Math.sin(enemy.wanderAngle) * enemy.speed * deltaTime * 0.5;
+                
+                // Basic boundary checking (room bounds)
+                const newX = enemy.x + moveX;
+                const newY = enemy.y + moveY;
+                
+                if (newX > 50 && newX < ROOM_WIDTH - 50) enemy.x = newX;
+                if (newY > 50 && newY < ROOM_HEIGHT - 50) enemy.y = newY;
+            } else if (enemy.type === ENEMY_TYPES.DASHER) {
+                // Update dasher state machine
+                if (enemy.state === 'windup') {
+                    if (now - enemy.windupTime >= enemy.windupDuration) {
+                        enemy.state = 'dashing';
+                        enemy.dashStartTime = now;
+                    }
+                } else if (enemy.state === 'dashing') {
+                    if (now - enemy.dashStartTime >= enemy.dashDuration) {
+                        enemy.state = 'cooldown';
+                        enemy.cooldownStartTime = now;
+                        enemy.lastDash = now;
+                    }
+                } else if (enemy.state === 'cooldown') {
+                    if (now - enemy.cooldownStartTime >= enemy.postDashCooldown) {
+                        enemy.state = 'idle';
+                    }
+                } else if (enemy.state === 'idle') {
+                    if (now - enemy.lastDash > enemy.dashCooldown) {
+                        enemy.state = 'windup';
+                        enemy.windupTime = now;
+                        // Random dash direction when no players in room
+                        const angle = Math.random() * Math.PI * 2;
+                        enemy.dashDirection = {
+                            x: Math.cos(angle),
+                            y: Math.sin(angle)
+                        };
+                    }
+                }
+            } else if (enemy.type === ENEMY_TYPES.NECROMANCER) {
+                // Necromancer just waits for players
+                // Basic idle movement
+                if (Math.random() < 0.01) {
+                    enemy.x += (Math.random() - 0.5) * 2;
+                    enemy.y += (Math.random() - 0.5) * 2;
+                }
+            }
+        });
+        
+        // Update the stored enemies
+        multiplayer.roomEnemies.set(roomKey, enemies);
+    });
+}
+
+// Send periodic updates for all rooms (host only)
+function broadcastAllRoomEnemies() {
+    if (!multiplayer.enabled || !multiplayer.isHost || !multiplayer.channel) return;
+    
+    const now = Date.now();
+    if (now - (multiplayer.lastAllRoomsUpdate || 0) < 500) return; // Update every 500ms
+    multiplayer.lastAllRoomsUpdate = now;
+    
+    // Broadcast enemy states for all rooms
+    multiplayer.roomEnemies.forEach((enemies, roomKey) => {
+        const [gridX, gridY] = roomKey.split(',').map(Number);
+        
+        // Skip current room (it's already being synced frequently)
+        if (gridX === game.gridX && gridY === game.gridY) return;
+        
+        // Only broadcast if there are enemies
+        if (enemies.length > 0) {
+            multiplayer.channel.send({
+                type: 'broadcast',
+                event: 'enemies_sync',
+                payload: {
+                    gridX: gridX,
+                    gridY: gridY,
+                    enemies: enemies.map(e => ({
+                        x: e.x,
+                        y: e.y,
+                        health: e.health,
+                        maxHealth: e.maxHealth,
+                        type: e.type,
+                        size: e.size,
+                        color: e.color,
+                        speed: e.speed,
+                        wanderAngle: e.wanderAngle,
+                        wanderTimer: e.wanderTimer,
+                        lastShot: e.lastShot,
+                        shotPattern: e.shotPattern,
+                        state: e.state,
+                        dashDirection: e.dashDirection,
+                        windupTime: e.windupTime,
+                        dashStartTime: e.dashStartTime,
+                        lastDash: e.lastDash,
+                        lastSummon: e.lastSummon,
+                        actualType: e.actualType
+                    }))
+                }
+            });
+        }
+    });
 }
 
 // NEW: Store current room's enemies before leaving (host only)
