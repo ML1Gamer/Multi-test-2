@@ -430,18 +430,27 @@ function enterRoom(room) {
                 // Host will take over AI, but enemies will already be visible locally
                 if (!multiplayer.isHost) {
                     console.log('🎮 Non-host spawning enemies, notifying host...');
-                    // Send spawn notification to host
-                    if (multiplayer.channel) {
-                        multiplayer.channel.send({
-                            type: 'broadcast',
-                            event: 'request_enemy_sync',
-                            payload: {
-                                gridX: room.gridX,
-                                gridY: room.gridY,
-                                playerId: multiplayer.playerId
-                            }
-                        });
-                    }
+                    // Send spawn notification to host with enemy data
+                    // Wait a bit for indicators to finish spawning
+                    setTimeout(() => {
+                        if (multiplayer.channel && game.enemySpawnIndicators.length > 0) {
+                            multiplayer.channel.send({
+                                type: 'broadcast',
+                                event: 'request_enemy_sync',
+                                payload: {
+                                    gridX: room.gridX,
+                                    gridY: room.gridY,
+                                    playerId: multiplayer.playerId,
+                                    enemies: game.enemySpawnIndicators.map(ind => ({
+                                        x: ind.x,
+                                        y: ind.y,
+                                        type: ind.type,
+                                        spawnTime: ind.spawnTime
+                                    }))
+                                }
+                            });
+                        }
+                    }, 100);
                 }
                 
                 // If host, broadcast spawn indicators immediately
