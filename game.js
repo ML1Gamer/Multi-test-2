@@ -204,7 +204,10 @@ function update(deltaTime) {
 
     game.player.angle = Math.atan2(game.mouseY - game.player.y, game.mouseX - game.player.x);
 
-    // Multiplayer sync - FIXED VERSION
+    // Add this to the update() function in game.js
+// Replace the existing multiplayer sync code around line 200-230
+
+    // Multiplayer sync - FIXED VERSION WITH ALL-ROOM AI
     if (multiplayer.enabled) {
         sendPlayerUpdate();
         
@@ -215,7 +218,13 @@ function update(deltaTime) {
         if (multiplayer.isHost) {
             const now = Date.now();
             
-            // Send enemy positions every 100ms
+            // NEW: Tick AI for all rooms, not just current room
+            tickAllRoomEnemies(deltaTime);
+            
+            // NEW: Broadcast enemy updates for all rooms periodically
+            broadcastAllRoomEnemies();
+            
+            // Send current room enemy positions every 100ms
             if (now - (multiplayer.lastEnemyUpdate || 0) > 100) {
                 sendEnemyUpdate();
                 multiplayer.lastEnemyUpdate = now;
@@ -237,7 +246,6 @@ function update(deltaTime) {
             interpolateEnemies(deltaTime);
         }
     }
-
     // Auto-pickup nearby items
     pickupNearbyItems();
 
